@@ -45,10 +45,10 @@ There are three easy ways to load a quiz.
 You can create a direct link to a quiz by appending its URL as a query parameter. This is the best way to share a specific quiz with others.
 
 **Format:**
-`https://<your-username>.github.io/<repository-name>/?url=<URL_TO_YOUR_XML_FILE>`
+`https://kmpenner.github.io/quiz/?url=<URL_TO_YOUR_XML_FILE>`
 
 **Example:**
-`https://your-name.github.io/moodle-quiz-viewer/?url=https://gist.githubusercontent.com/user/quiz.xml`
+`https://kmpenner.github.io/moodle-quiz-viewer/?url=https://gist.githubusercontent.com/user/quiz.xml`
 
 ---
 
