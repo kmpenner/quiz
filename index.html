@@ -244,12 +244,73 @@
                 }
 
                 if (isMatch && ansFrac > bestMatch.fraction) {
-                    bestMatch = { fraction: ansFrac, feedback: ans.querySelector('feedback > text')?.innerHTML || 'Correct!' };
+                    bestMatch = { fraction: ansFrac, feedback: ans.querySelector('feedback > text')?.innerHTML };
                 }
             }
             const isCorrect = bestMatch.fraction >= 100;
             if (isCorrect) score++;
-            showFeedback(bestMatch.feedback, bestMatch.fraction > 0 ? (isCorrect ? true : 'partial') : false);
+
+            const feedbackType = bestMatch.fraction > 0 ? (isCorrect ? true : 'partial') : false;
+            let feedbackToShow = bestMatch.feedback && bestMatch.feedback.trim();
+
+            if (!feedbackToShow) {
+                // Provide default feedback if the matched answer has no specific feedback text
+                if (bestMatch.fraction > 0) {
+                    feedbackToShow = isCorrect ? 'Correct!' : 'Partially Correct.';
+                } else {
+                    feedbackToShow = 'Incorrect.';
+                }
+            }
+
+            showFeedback(feedbackToShow, feedbackType);
+            showGeneralFeedback(qNode);
+            updateScoreDisplay();
+        });
+    }
+
+    function renderNumerical(qNode) {
+        questionArea.insertAdjacentHTML('beforeend', `<label for="num-input">Your Answer:</label><input type="number" id="num-input" step="any" />`);
+        addSubmitButton(() => {
+            const userInputText = document.getElementById('num-input').value.trim();
+            if (userInputText === '') {
+                showFeedback('Please enter a number.', false);
+                showGeneralFeedback(qNode);
+                return;
+            }
+            const userInput = parseFloat(userInputText);
+
+            const answers = Array.from(qNode.getElementsByTagName('answer'));
+            let bestMatch = { fraction: -1, feedback: 'Incorrect.' };
+
+            for (const ans of answers) {
+                const correctValue = parseFloat(ans.querySelector('text').textContent);
+                const ansFrac = parseFloat(ans.getAttribute('fraction'));
+                const tolerance = parseFloat(ans.querySelector('tolerance')?.textContent || '0');
+
+                if (!isNaN(correctValue) && Math.abs(userInput - correctValue) <= tolerance) {
+                    if (ansFrac > bestMatch.fraction) {
+                        bestMatch = { fraction: ansFrac, feedback: ans.querySelector('feedback > text')?.innerHTML };
+                    }
+                }
+            }
+
+            const isCorrect = bestMatch.fraction >= 100;
+            if (isCorrect) score++;
+
+            const feedbackType = bestMatch.fraction > 0 ? (isCorrect ? true : 'partial') : false;
+            let feedbackToShow = bestMatch.feedback && bestMatch.feedback.trim();
+
+            if (!feedbackToShow) {
+                if (bestMatch.fraction >= 100) {
+                    feedbackToShow = 'Correct!';
+                } else if (bestMatch.fraction > 0) {
+                    feedbackToShow = 'Partially Correct.';
+                } else {
+                    feedbackToShow = 'Incorrect.';
+                }
+            }
+
+            showFeedback(feedbackToShow, feedbackType);
             showGeneralFeedback(qNode);
             updateScoreDisplay();
         });
