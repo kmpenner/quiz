@@ -289,6 +289,84 @@
             btn.onclick = () => { showGeneralFeedback(qNode); btn.disabled = true; nextBtn.style.display = 'block'; };
             questionArea.appendChild(btn);
         }
+    function renderCloze(qNode) {
+        let questionText = qNode.querySelector('questiontext > text').innerHTML;
+        // Basic grading state
+        let clozeSubQuestions = [];
+
+        const renderedParts = questionText.split(/(\{[^}]+\})/g).filter(Boolean).map(part => {
+            if (!part.startsWith('{') || !part.endsWith('}')) {
+                return DOMPurify.sanitize(part);
+            }
+
+            const clozeIndex = clozeSubQuestions.length;
+            const content = part.slice(1, -1);
+            const [rawPoints, type, ...options] = content.split(':');
+            const optionsString = options.join(':');
+            const answers = optionsString.split('~').map(opt => {
+                const match = opt.match(/^%(-?\d+)%(.*?)#?(.*)$/); // text and feedback
+                if (match) return { fraction: parseInt(match[1], 10), text: match[2], feedback: match[3] };
+                const simpleMatch = opt.match(/^%(-?\d+)%(.*)$/);
+                if (simpleMatch) return { fraction: parseInt(simpleMatch[1], 10), text: simpleMatch[2], feedback: '' };
+                return null;
+            }).filter(Boolean);
+
+            const typeUpper = type.toUpperCase();
+            let subQuestion = { type: typeUpper, answers, correct: false, id: `cloze_${clozeIndex}` };
+
+            if (typeUpper.startsWith('SA') || typeUpper.startsWith('MW')) {
+                subQuestion.correctAnswer = answers.find(a => a.fraction === 100)?.text;
+                clozeSubQuestions.push(subQuestion);
+                return `<input type="text" class="cloze-text-input" id="${subQuestion.id}" />`;
+            } else if (typeUpper.startsWith('MC')) {
+                clozeSubQuestions.push(subQuestion);
+                const isVertical = typeUpper.endsWith('V');
+                const useRadios = typeUpper.startsWith('MC'); // Not MCA (checkbox)
+                let html = `<span class="cloze-options-container ${isVertical ? 'vertical' : 'horizontal'}">`;
+                answers.forEach((answer, idx) => {
+                    const id = `${subQuestion.id}_${idx}`;
+                    html += `<span class="cloze-option"><input type="${useRadios ? 'radio' : 'checkbox'}" name="${subQuestion.id}" id="${id}" value="${answer.fraction}"><label for="${id}">${DOMPurify.sanitize(answer.text)}</label></span>`;
+                });
+                return html + `</span>`;
+            } else if (typeUpper.startsWith('NM')) {
+                 // Simple numerical matching for now
+                subQuestion.correctAnswer = answers.find(a => a.fraction === 100)?.text;
+                clozeSubQuestions.push(subQuestion);
+                return `<input type="number" class="cloze-text-input" id="${subQuestion.id}" />`;
+            }
+            return ` <span class="cloze-warning">[Unsupported cloze: ${type}]</span> `;
+        });
+
+        questionArea.querySelector('.question-text').innerHTML = renderedParts.join('');
+
+        addSubmitButton(() => {
+            let clozeScore = 0;
+            let maxClozeScore = clozeSubQuestions.length; // Simplified: 1 point per sub-question
+            clozeSubQuestions.forEach(sq => {
+                if (sq.type.startsWith('SA') || sq.type.startsWith('MW') || sq.type.startsWith('NM')) {
+                    const input = document.getElementById(sq.id);
+                    if (input && input.value.trim().toLowerCase() === sq.correctAnswer.toLowerCase()) {
+                        clozeScore++;
+                    }
+                } else if (sq.type.startsWith('MC')) {
+                    const inputs = document.querySelectorAll(`input[name="${sq.id}"]:checked`);
+                    let totalFraction = 0;
+                    inputs.forEach(i => totalFraction += parseFloat(i.value));
+                    if (totalFraction >= 100) {
+                        clozeScore++;
+                    }
+                }
+            });
+            
+            // For simplicity, full credit if all parts are correct.
+            if (clozeScore === maxClozeScore) {
+                score++;
+            }
+            showFeedback(`You got ${clozeScore} out of ${maxClozeScore} parts correct.`, clozeScore === maxClozeScore);
+            showGeneralFeedback(qNode);
+            updateScoreDisplay();
+        });
+    }
 
         function renderDescription(qNode) {
             showGeneralFeedback(qNode); nextBtn.style.display = 'block';
