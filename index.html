@@ -149,14 +149,7 @@
         feedbackArea.innerHTML = ''; nextBtn.style.display = 'none'; questionArea.innerHTML = '';
         const qTextNode = qNode.querySelector('questiontext > text');
         
-        // FIX #1: Robustly get content from the XML node to correctly handle CDATA
-        let questionContent = '';
-        if (qTextNode) {
-            const serializer = new XMLSerializer();
-            for (const child of qTextNode.childNodes) {
-                questionContent += serializer.serializeToString(child);
-            }
-        }
+        const questionContent = getContentFromNode(qTextNode);
         
         const sanitizedQuestionText = DOMPurify.sanitize(questionContent);
         questionArea.insertAdjacentHTML('beforeend', `<div class="question-text">${sanitizedQuestionText}</div>`);
@@ -186,7 +179,7 @@
         let html = '<form class="answers">';
         displayAnswers.forEach((ans) => {
             const frac = parseFloat(ans.getAttribute('fraction'));
-            const text = DOMPurify.sanitize(ans.querySelector('text').innerHTML);
+            const text = DOMPurify.sanitize(getContentFromNode(ans.querySelector('text')));
             const id = 'ans' + Math.random().toString(36).substring(2, 9);
             html += `<div class="answer-choice"><input type="${isSingle ? 'radio' : 'checkbox'}" name="answer" id="${id}" value="${frac}"><label for="${id}">${text}</label></div>`;
         });
@@ -208,8 +201,9 @@
                 const selectedIndex = Array.from(document.querySelectorAll(`input[name="answer"]`)).findIndex(input => input.id === selectedAnswerNode.id);
                 const answerNode = displayAnswers[selectedIndex];
                 const feedbackNode = answerNode.querySelector('feedback text');
-                if (feedbackNode && feedbackNode.innerHTML.trim()) {
-                    showFeedback(feedbackNode.innerHTML, isCorrect);
+                const feedbackContent = getContentFromNode(feedbackNode);
+                if (feedbackContent.trim()) {
+                    showFeedback(feedbackContent, isCorrect);
                 } else {
                      showFeedback(isCorrect ? 'Correct!' : 'Incorrect.', isCorrect);
                 }
@@ -244,7 +238,7 @@
                 }
 
                 if (isMatch && ansFrac > bestMatch.fraction) {
-                    bestMatch = { fraction: ansFrac, feedback: ans.querySelector('feedback > text')?.innerHTML };
+                    bestMatch = { fraction: ansFrac, feedback: getContentFromNode(ans.querySelector('feedback > text')) };
                 }
             }
             const isCorrect = bestMatch.fraction >= 100;
@@ -289,7 +283,7 @@
 
                 if (!isNaN(correctValue) && Math.abs(userInput - correctValue) <= tolerance) {
                     if (ansFrac > bestMatch.fraction) {
-                        bestMatch = { fraction: ansFrac, feedback: ans.querySelector('feedback > text')?.innerHTML };
+                        bestMatch = { fraction: ansFrac, feedback: getContentFromNode(ans.querySelector('feedback > text')) };
                     }
                 }
             }
@@ -389,7 +383,7 @@
     }
 
     function renderCloze(qNode) {
-        let questionText = qNode.querySelector('questiontext > text').innerHTML;
+        let questionText = getContentFromNode(qNode.querySelector('questiontext > text'));
         // Basic grading state
         let clozeSubQuestions = [];
 
@@ -497,6 +491,13 @@
     }
 
     // --- HELPER FUNCTIONS ---
+    function getContentFromNode(node) {
+        if (!node) return '';
+        // Using innerHTML is the most reliable way to get the content of a node,
+        // including handling CDATA sections correctly and preserving inner HTML tags.
+        return node.innerHTML || '';
+    }
+
     function addSubmitButton(onSubmit) {
         const btn = document.createElement('button'); btn.textContent = 'Submit Answer';
         btn.onclick = () => {
@@ -513,8 +514,9 @@
 
     function showGeneralFeedback(qNode) {
         const node = qNode.querySelector('generalfeedback > text');
-        if (node?.innerHTML.trim()) {
-            const sanitizedFeedback = DOMPurify.sanitize(node.innerHTML);
+        const feedbackContent = getContentFromNode(node);
+        if (feedbackContent.trim()) {
+            const sanitizedFeedback = DOMPurify.sanitize(feedbackContent);
             feedbackArea.innerHTML += `<div class="feedback feedback-general"><b>General Feedback:</b> ${sanitizedFeedback}</div>`;
         }
     }
