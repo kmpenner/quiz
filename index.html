@@ -55,6 +55,10 @@
         .cloze-option { display: inline-block; margin-right: 10px; }
         .cloze-option label { font-weight: normal; }
         .cloze-text-input { width: 150px; display: inline-block; }
+        #progress-container { width: 100%; margin-top: 15px; }
+        #progress-bar-bg { background-color: #e0e0e0; border-radius: 4px; padding: 2px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
+        #progress-bar { width: 0%; height: 18px; background-color: #0078D4; border-radius: 2px; transition: width 0.3s ease-in-out; }
+        #progress-text { text-align: right; margin-bottom: 5px; font-size: 0.9em; color: #555; }
     </style>
 </head>
 <body>
@@ -78,8 +82,14 @@
     </div>
 
     <div id="score-container" style="display:none;">
-        <h2>Score</h2>
-        <div id="score-display">Score: 0 / 0 (0%)</div>
+        <h2>Progress</h2>
+        <div id="score-display"></div>
+        <div id="progress-container">
+            <div id="progress-text"></div>
+            <div id="progress-bar-bg">
+                <div id="progress-bar"></div>
+            </div>
+        </div>
     </div>
     
 <script>
@@ -90,7 +100,7 @@
         questionArea = document.getElementById('question-area'), feedbackArea = document.getElementById('feedback-area'),
         nextBtn = document.getElementById('next-btn'), scoreDisplay = document.getElementById('score-display'),
         categoryDisplay = document.getElementById('category-display');
-    let quizData = null, currentQuestionIndex = 0, score = 0, scorableQuestions = 0;
+    let quizData = null, currentQuestionIndex = 0, score = 0, scorableQuestions = 0, scorableQuestionsAttempted = 0;
 
     // --- INITIALIZATION ---
     window.addEventListener('load', () => {
@@ -139,12 +149,13 @@
 
     function startQuiz() {
         setupContainer.style.display = 'none'; quizContainer.style.display = 'block'; scoreContainer.style.display = 'block';
-        currentQuestionIndex = 0; score = 0; categoryDisplay.innerHTML = '';
+        currentQuestionIndex = 0; score = 0; scorableQuestionsAttempted = 0; categoryDisplay.innerHTML = '';
         updateScoreDisplay();
         renderQuestion(currentQuestionIndex);
     }
     
     function renderQuestion(index) {
+        updateProgressDisplay();
         const qNode = quizData[index], qType = qNode.getAttribute('type');
         feedbackArea.innerHTML = ''; nextBtn.style.display = 'none'; questionArea.innerHTML = '';
         const qTextNode = qNode.querySelector('questiontext > text');
@@ -501,8 +512,9 @@
     function addSubmitButton(onSubmit) {
         const btn = document.createElement('button'); btn.textContent = 'Submit Answer';
         btn.onclick = () => {
+            scorableQuestionsAttempted++;
             onSubmit(); btn.disabled = true; nextBtn.style.display = 'block';
-            document.querySelectorAll('form.answers input').forEach(el => el.disabled = true);
+            document.querySelectorAll('form.answers input, .matching-select, #sa-input, #num-input, .cloze-text-input, .cloze-option input').forEach(el => el.disabled = true);
         };
         questionArea.appendChild(btn);
     }
@@ -522,14 +534,36 @@
     }
     
     function updateScoreDisplay() {
-        const perc = scorableQuestions > 0 ? ((score / scorableQuestions) * 100).toFixed(0) : 0;
-        scoreDisplay.textContent = `Score: ${score} / ${scorableQuestions} (${perc}%)`;
+        const perc = scorableQuestionsAttempted > 0 ? ((score / scorableQuestionsAttempted) * 100).toFixed(0) : 0;
+        scoreDisplay.textContent = `Score: ${score} / ${scorableQuestionsAttempted} (${perc}%)`;
+    }
+
+    function updateProgressDisplay() {
+        if (!quizData) return;
+        const totalQuestions = quizData.length;
+        const questionsToShow = Math.min(currentQuestionIndex + 1, totalQuestions);
+        const progressPerc = totalQuestions > 0 ? ((questionsToShow / totalQuestions) * 100) : 0;
+
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+
+        if (progressBar && progressText) {
+            progressBar.style.width = `${progressPerc}%`;
+            progressText.textContent = `Question ${questionsToShow} of ${totalQuestions}`;
+        }
     }
 
     function displayFinalScore() {
         questionArea.innerHTML = '<h2>Quiz Complete!</h2>';
         feedbackArea.innerHTML = `<p>You have finished the quiz. Your final score is shown above.</p>`;
         nextBtn.style.display = 'none'; categoryDisplay.innerHTML = '';
+
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        if (progressBar && progressText) {
+            progressBar.style.width = '100%';
+            progressText.textContent = `Quiz Complete! ${quizData.length} of ${quizData.length}`;
+        }
     }
 
     function escapeHTML(str) {
