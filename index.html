@@ -316,9 +316,185 @@
         });
     }
     
-    // Other render functions (numerical, matching, etc.) remain the same
-    // ... paste the other functions here ...
+    function renderMatching(qNode) {
+        const subQuestions = Array.from(qNode.querySelectorAll('subquestion'));
+        if (subQuestions.length === 0) {
+            return renderUnsupported(qNode); // or handle as an error
+        }
 
+        const stems = subQuestions.map(sq => sq.querySelector('text').textContent.trim());
+        const correctAnswers = subQuestions.map(sq => sq.querySelector('answer text').textContent.trim());
+
+        let dropdownOptions = [...correctAnswers];
+        if (qNode.querySelector('shuffleanswers')?.textContent !== '0') {
+            dropdownOptions.sort(() => Math.random() - 0.5);
+        }
+
+        let html = '<div class="matching-container"><div class="stems" style="padding-right: 15px;">';
+        stems.forEach((stem, index) => {
+            html += `<div class="stem" data-index="${index}" style="margin-bottom: 15px;">${DOMPurify.sanitize(stem)}</div>`;
+        });
+        html += '</div><div class="responses">';
+
+        stems.forEach((_, index) => {
+            html += `<div class="response-container" style="margin-bottom: 15px;"><select class="matching-select" data-index="${index}">`;
+            html += `<option value="">Select...</option>`;
+            dropdownOptions.forEach(option => {
+                html += `<option value="${escapeHTML(option)}">${DOMPurify.sanitize(option)}</option>`;
+            });
+            html += `</select></div>`;
+        });
+        html += '</div></div>';
+
+        questionArea.insertAdjacentHTML('beforeend', html);
+
+        addSubmitButton(() => {
+            const selects = document.querySelectorAll('.matching-select');
+            let correctMatches = 0;
+            selects.forEach((select, index) => {
+                if (select.value === correctAnswers[index]) {
+                    correctMatches++;
+                }
+            });
+
+            const totalQuestions = stems.length;
+            const fraction = totalQuestions > 0 ? correctMatches / totalQuestions : 0;
+            const isCorrect = correctMatches === totalQuestions;
+            if (isCorrect) score++;
+
+            let feedbackText = `You matched ${correctMatches} out of ${totalQuestions} correctly.`;
+            let feedbackType = fraction === 1 ? true : (fraction > 0 ? 'partial' : false);
+
+            showFeedback(feedbackText, feedbackType);
+            showGeneralFeedback(qNode);
+            updateScoreDisplay();
+            selects.forEach(s => s.disabled = true);
+        });
+    }
+
+    function renderEssay(qNode) {
+        questionArea.insertAdjacentHTML('beforeend', `
+            <p>This is an essay question. Your response will not be graded automatically.</p>
+            <textarea id="essay-input" rows="10" placeholder="Type your essay here..."></textarea>
+        `);
+        const btn = document.createElement('button');
+        btn.textContent = 'Continue';
+        btn.onclick = () => {
+            btn.disabled = true;
+            nextBtn.style.display = 'block';
+            document.getElementById('essay-input').disabled = true;
+            showGeneralFeedback(qNode);
+        };
+        questionArea.appendChild(btn);
+    }
+
+    function renderCloze(qNode) {
+        let questionText = qNode.querySelector('questiontext > text').innerHTML;
+        // Basic grading state
+        let clozeSubQuestions = [];
+
+        const renderedParts = questionText.split(/(\{[^}]+\})/g).filter(Boolean).map(part => {
+            if (!part.startsWith('{') || !part.endsWith('}')) {
+                return DOMPurify.sanitize(part);
+            }
+
+            const clozeIndex = clozeSubQuestions.length;
+            const content = part.slice(1, -1);
+            const [rawPoints, type, ...options] = content.split(':');
+            const optionsString = options.join(':');
+            const answers = optionsString.split('~').map(opt => {
+                const match = opt.match(/^%(-?\d+)%(.*?)#?(.*)$/); // text and feedback
+                if (match) return { fraction: parseInt(match[1], 10), text: match[2], feedback: match[3] };
+                const simpleMatch = opt.match(/^%(-?\d+)%(.*)$/);
+                if (simpleMatch) return { fraction: parseInt(simpleMatch[1], 10), text: simpleMatch[2], feedback: '' };
+                return null;
+            }).filter(Boolean);
+
+            const typeUpper = type.toUpperCase();
+            let subQuestion = { type: typeUpper, answers, correct: false, id: `cloze_${clozeIndex}` };
+
+            if (typeUpper.startsWith('SA') || typeUpper.startsWith('MW')) {
+                subQuestion.correctAnswer = answers.find(a => a.fraction === 100)?.text;
+                clozeSubQuestions.push(subQuestion);
+                return `<input type="text" class="cloze-text-input" id="${subQuestion.id}" />`;
+            } else if (typeUpper.startsWith('MC')) {
+                clozeSubQuestions.push(subQuestion);
+                const isVertical = typeUpper.endsWith('V');
+                const useRadios = typeUpper.startsWith('MC'); // Not MCA (checkbox)
+                let html = `<span class="cloze-options-container ${isVertical ? 'vertical' : 'horizontal'}">`;
+                answers.forEach((answer, idx) => {
+                    const id = `${subQuestion.id}_${idx}`;
+                    html += `<span class="cloze-option"><input type="${useRadios ? 'radio' : 'checkbox'}" name="${subQuestion.id}" id="${id}" value="${answer.fraction}"><label for="${id}">${DOMPurify.sanitize(answer.text)}</label></span>`;
+                });
+                return html + `</span>`;
+            } else if (typeUpper.startsWith('NM')) {
+                 // Simple numerical matching for now
+                subQuestion.correctAnswer = answers.find(a => a.fraction === 100)?.text;
+                clozeSubQuestions.push(subQuestion);
+                return `<input type="number" class="cloze-text-input" id="${subQuestion.id}" />`;
+            } else {
+                return ` <span class="cloze-warning">[Unsupported cloze type: ${type}]</span> `;
+            }
+        });
+
+        // The innerHTML of the question text contains the cloze placeholders.
+        // We need to replace the placeholders with the rendered parts.
+        // The question text is already in the DOM, so we can't just set innerHTML on questionArea.
+        const questionTextElement = questionArea.querySelector('.question-text');
+        // The content of the question text is already sanitized, but the rendered parts are not.
+        // The rendered parts are sanitized inside the map function.
+        questionTextElement.innerHTML = renderedParts.join('');
+
+        addSubmitButton(() => {
+            let clozeScore = 0;
+            let maxClozeScore = clozeSubQuestions.length; // Simplified: 1 point per sub-question
+            clozeSubQuestions.forEach(sq => {
+                if (sq.type.startsWith('SA') || sq.type.startsWith('MW') || sq.type.startsWith('NM')) {
+                    const input = document.getElementById(sq.id);
+                    if (input && input.value.trim().toLowerCase() === sq.correctAnswer.toLowerCase()) {
+                        clozeScore++;
+                    }
+                } else if (sq.type.startsWith('MC')) {
+                    const inputs = document.querySelectorAll(`input[name="${sq.id}"]:checked`);
+                    let totalFraction = 0;
+                    inputs.forEach(i => totalFraction += parseFloat(i.value));
+                    if (totalFraction >= 100) {
+                        clozeScore++;
+                    }
+                }
+            });
+
+            // For simplicity, full credit if all parts are correct.
+            if (clozeScore === maxClozeScore) {
+                score++;
+            }
+            showFeedback(`You got ${clozeScore} out of ${maxClozeScore} parts correct.`, clozeScore === maxClozeScore);
+            showGeneralFeedback(qNode);
+            updateScoreDisplay();
+        });
+    }
+
+    function renderDescription(qNode) {
+        nextBtn.style.display = 'block';
+    }
+
+    function renderCategory(qNode) {
+        const categoryText = qNode.querySelector('category > text').textContent;
+        categoryDisplay.innerHTML = `<h3 class="category-title">${DOMPurify.sanitize(categoryText)}</h3>`;
+        currentQuestionIndex++;
+        (currentQuestionIndex < quizData.length) ? renderQuestion(currentQuestionIndex) : displayFinalScore();
+    }
+
+    function renderUnsupported(qNode) {
+        const qType = qNode.getAttribute('type');
+        questionArea.insertAdjacentHTML('beforeend', `
+            <div class="unsupported-warning">
+                <strong>Question type not supported:</strong> The question type "${escapeHTML(qType || 'unknown')}" will be skipped.
+            </div>
+        `);
+        showGeneralFeedback(qNode);
+        nextBtn.style.display = 'block';
+    }
 
     // --- HELPER FUNCTIONS ---
     function addSubmitButton(onSubmit) {
