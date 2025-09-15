@@ -55,6 +55,10 @@
         .cloze-option { display: inline-block; margin-right: 10px; }
         .cloze-option label { font-weight: normal; }
         .cloze-text-input { width: 150px; display: inline-block; }
+        #progress-container { width: 100%; margin-top: 15px; }
+        #progress-bar-bg { background-color: #e0e0e0; border-radius: 4px; padding: 2px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
+        #progress-bar { width: 0%; height: 18px; background-color: #0078D4; border-radius: 2px; transition: width 0.3s ease-in-out; }
+        #progress-text { text-align: right; margin-bottom: 5px; font-size: 0.9em; color: #555; }
     </style>
 </head>
 <body>
@@ -78,8 +82,14 @@
     </div>
 
     <div id="score-container" style="display:none;">
-        <h2>Score</h2>
-        <div id="score-display">Score: 0 / 0 (0%)</div>
+        <h2>Progress</h2>
+        <div id="score-display"></div>
+        <div id="progress-container">
+            <div id="progress-text"></div>
+            <div id="progress-bar-bg">
+                <div id="progress-bar"></div>
+            </div>
+        </div>
     </div>
     
 <script>
@@ -90,7 +100,7 @@
         questionArea = document.getElementById('question-area'), feedbackArea = document.getElementById('feedback-area'),
         nextBtn = document.getElementById('next-btn'), scoreDisplay = document.getElementById('score-display'),
         categoryDisplay = document.getElementById('category-display');
-    let quizData = null, currentQuestionIndex = 0, score = 0, scorableQuestions = 0;
+    let quizData = null, currentQuestionIndex = 0, score = 0, scorableQuestions = 0, scorableQuestionsAttempted = 0;
 
     // --- INITIALIZATION ---
     window.addEventListener('load', () => {
@@ -139,24 +149,18 @@
 
     function startQuiz() {
         setupContainer.style.display = 'none'; quizContainer.style.display = 'block'; scoreContainer.style.display = 'block';
-        currentQuestionIndex = 0; score = 0; categoryDisplay.innerHTML = '';
+        currentQuestionIndex = 0; score = 0; scorableQuestionsAttempted = 0; categoryDisplay.innerHTML = '';
         updateScoreDisplay();
         renderQuestion(currentQuestionIndex);
     }
     
     function renderQuestion(index) {
+        updateProgressDisplay();
         const qNode = quizData[index], qType = qNode.getAttribute('type');
         feedbackArea.innerHTML = ''; nextBtn.style.display = 'none'; questionArea.innerHTML = '';
         const qTextNode = qNode.querySelector('questiontext > text');
         
-        // FIX #1: Robustly get content from the XML node to correctly handle CDATA
-        let questionContent = '';
-        if (qTextNode) {
-            const serializer = new XMLSerializer();
-            for (const child of qTextNode.childNodes) {
-                questionContent += serializer.serializeToString(child);
-            }
-        }
+        const questionContent = getContentFromNode(qTextNode);
         
         const sanitizedQuestionText = DOMPurify.sanitize(questionContent);
         questionArea.insertAdjacentHTML('beforeend', `<div class="question-text">${sanitizedQuestionText}</div>`);
@@ -186,7 +190,7 @@
         let html = '<form class="answers">';
         displayAnswers.forEach((ans) => {
             const frac = parseFloat(ans.getAttribute('fraction'));
-            const text = DOMPurify.sanitize(ans.querySelector('text').innerHTML);
+            const text = DOMPurify.sanitize(getContentFromNode(ans.querySelector('text')));
             const id = 'ans' + Math.random().toString(36).substring(2, 9);
             html += `<div class="answer-choice"><input type="${isSingle ? 'radio' : 'checkbox'}" name="answer" id="${id}" value="${frac}"><label for="${id}">${text}</label></div>`;
         });
@@ -208,8 +212,9 @@
                 const selectedIndex = Array.from(document.querySelectorAll(`input[name="answer"]`)).findIndex(input => input.id === selectedAnswerNode.id);
                 const answerNode = displayAnswers[selectedIndex];
                 const feedbackNode = answerNode.querySelector('feedback text');
-                if (feedbackNode && feedbackNode.innerHTML.trim()) {
-                    showFeedback(feedbackNode.innerHTML, isCorrect);
+                const feedbackContent = getContentFromNode(feedbackNode);
+                if (feedbackContent.trim()) {
+                    showFeedback(feedbackContent, isCorrect);
                 } else {
                      showFeedback(isCorrect ? 'Correct!' : 'Incorrect.', isCorrect);
                 }
@@ -244,7 +249,7 @@
                 }
 
                 if (isMatch && ansFrac > bestMatch.fraction) {
-                    bestMatch = { fraction: ansFrac, feedback: ans.querySelector('feedback > text')?.innerHTML || 'Correct!' };
+                    bestMatch = { fraction: ansFrac, feedback: getContentFromNode(ans.querySelector('feedback > text')) };
                 }
             }
             const isCorrect = bestMatch.fraction >= 100;
@@ -367,35 +372,201 @@
             updateScoreDisplay();
         });
     }
-
-        function renderDescription(qNode) {
-            showGeneralFeedback(qNode); nextBtn.style.display = 'block';
+    function renderMatching(qNode) {
+        const subQuestions = Array.from(qNode.querySelectorAll('subquestion'));
+        if (subQuestions.length === 0) {
+            return renderUnsupported(qNode); // or handle as an error
         }
 
-        function renderCategory(qNode) {
-            const catText = qNode.querySelector('category > text')?.textContent.split('/').pop();
-            if(catText) {
-                // SANITIZE
-                categoryDisplay.innerHTML = `<h3 class="category-title">${DOMPurify.sanitize(catText)}</h3>`;
-            }
-            currentQuestionIndex++;
-            if (currentQuestionIndex < quizData.length) { renderQuestion(currentQuestionIndex); } 
-            else { displayFinalScore(); }
+        const stems = subQuestions.map(sq => sq.querySelector('text').textContent.trim());
+        const correctAnswers = subQuestions.map(sq => sq.querySelector('answer text').textContent.trim());
+
+        let dropdownOptions = [...correctAnswers];
+        if (qNode.querySelector('shuffleanswers')?.textContent !== '0') {
+            dropdownOptions.sort(() => Math.random() - 0.5);
         }
 
-        function renderUnsupported(qNode) {
-            const qType = qNode.getAttribute('type');
-            // SANITIZE (for safety, though qType is unlikely to be malicious here)
-            questionArea.innerHTML = `<div class="unsupported-warning">The question type "<b>${DOMPurify.sanitize(qType)}</b>" is not supported by this viewer.</div>`;
+        let html = '<div class="matching-container"><div class="stems" style="padding-right: 15px;">';
+        stems.forEach((stem, index) => {
+            html += `<div class="stem" data-index="${index}" style="margin-bottom: 15px;">${DOMPurify.sanitize(stem)}</div>`;
+        });
+        html += '</div><div class="responses">';
+
+        stems.forEach((_, index) => {
+            html += `<div class="response-container" style="margin-bottom: 15px;"><select class="matching-select" data-index="${index}">`;
+            html += `<option value="">Select...</option>`;
+            dropdownOptions.forEach(option => {
+                html += `<option value="${escapeHTML(option)}">${DOMPurify.sanitize(option)}</option>`;
+            });
+            html += `</select></div>`;
+        });
+        html += '</div></div>';
+
+        questionArea.insertAdjacentHTML('beforeend', html);
+
+        addSubmitButton(() => {
+            const selects = document.querySelectorAll('.matching-select');
+            let correctMatches = 0;
+            selects.forEach((select, index) => {
+                if (select.value === correctAnswers[index]) {
+                    correctMatches++;
+                }
+            });
+
+            const totalQuestions = stems.length;
+            const fraction = totalQuestions > 0 ? correctMatches / totalQuestions : 0;
+            const isCorrect = correctMatches === totalQuestions;
+            if (isCorrect) score++;
+
+            let feedbackText = `You matched ${correctMatches} out of ${totalQuestions} correctly.`;
+            let feedbackType = fraction === 1 ? true : (fraction > 0 ? 'partial' : false);
+
+            showFeedback(feedbackText, feedbackType);
+            showGeneralFeedback(qNode);
+            updateScoreDisplay();
+            selects.forEach(s => s.disabled = true);
+        });
+    }
+
+    function renderEssay(qNode) {
+        questionArea.insertAdjacentHTML('beforeend', `
+            <p>This is an essay question. Your response will not be graded automatically.</p>
+            <textarea id="essay-input" rows="10" placeholder="Type your essay here..."></textarea>
+        `);
+        const btn = document.createElement('button');
+        btn.textContent = 'Continue';
+        btn.onclick = () => {
+            btn.disabled = true;
             nextBtn.style.display = 'block';
-        }
+            document.getElementById('essay-input').disabled = true;
+            showGeneralFeedback(qNode);
+        };
+        questionArea.appendChild(btn);
+    }
+
+    function renderCloze(qNode) {
+        let questionText = getContentFromNode(qNode.querySelector('questiontext > text'));
+        // Basic grading state
+        let clozeSubQuestions = [];
+
+        const renderedParts = questionText.split(/(\{[^}]+\})/g).filter(Boolean).map(part => {
+            if (!part.startsWith('{') || !part.endsWith('}')) {
+                return DOMPurify.sanitize(part);
+            }
+
+            const clozeIndex = clozeSubQuestions.length;
+            const content = part.slice(1, -1);
+            const [rawPoints, type, ...options] = content.split(':');
+            const optionsString = options.join(':');
+            const answers = optionsString.split('~').map(opt => {
+                const match = opt.match(/^%(-?\d+)%(.*?)#?(.*)$/); // text and feedback
+                if (match) return { fraction: parseInt(match[1], 10), text: match[2], feedback: match[3] };
+                const simpleMatch = opt.match(/^%(-?\d+)%(.*)$/);
+                if (simpleMatch) return { fraction: parseInt(simpleMatch[1], 10), text: simpleMatch[2], feedback: '' };
+                return null;
+            }).filter(Boolean);
+
+            const typeUpper = type.toUpperCase();
+            let subQuestion = { type: typeUpper, answers, correct: false, id: `cloze_${clozeIndex}` };
+
+            if (typeUpper.startsWith('SA') || typeUpper.startsWith('MW')) {
+                subQuestion.correctAnswer = answers.find(a => a.fraction === 100)?.text;
+                clozeSubQuestions.push(subQuestion);
+                return `<input type="text" class="cloze-text-input" id="${subQuestion.id}" />`;
+            } else if (typeUpper.startsWith('MC')) {
+                clozeSubQuestions.push(subQuestion);
+                const isVertical = typeUpper.endsWith('V');
+                const useRadios = typeUpper.startsWith('MC'); // Not MCA (checkbox)
+                let html = `<span class="cloze-options-container ${isVertical ? 'vertical' : 'horizontal'}">`;
+                answers.forEach((answer, idx) => {
+                    const id = `${subQuestion.id}_${idx}`;
+                    html += `<span class="cloze-option"><input type="${useRadios ? 'radio' : 'checkbox'}" name="${subQuestion.id}" id="${id}" value="${answer.fraction}"><label for="${id}">${DOMPurify.sanitize(answer.text)}</label></span>`;
+                });
+                return html + `</span>`;
+            } else if (typeUpper.startsWith('NM')) {
+                 // Simple numerical matching for now
+                subQuestion.correctAnswer = answers.find(a => a.fraction === 100)?.text;
+                clozeSubQuestions.push(subQuestion);
+                return `<input type="number" class="cloze-text-input" id="${subQuestion.id}" />`;
+            } else {
+                return ` <span class="cloze-warning">[Unsupported cloze type: ${type}]</span> `;
+            }
+        });
+
+        // The innerHTML of the question text contains the cloze placeholders.
+        // We need to replace the placeholders with the rendered parts.
+        // The question text is already in the DOM, so we can't just set innerHTML on questionArea.
+        const questionTextElement = questionArea.querySelector('.question-text');
+        // The content of the question text is already sanitized, but the rendered parts are not.
+        // The rendered parts are sanitized inside the map function.
+        questionTextElement.innerHTML = renderedParts.join('');
+
+        addSubmitButton(() => {
+            let clozeScore = 0;
+            let maxClozeScore = clozeSubQuestions.length; // Simplified: 1 point per sub-question
+            clozeSubQuestions.forEach(sq => {
+                if (sq.type.startsWith('SA') || sq.type.startsWith('MW') || sq.type.startsWith('NM')) {
+                    const input = document.getElementById(sq.id);
+                    if (input && input.value.trim().toLowerCase() === sq.correctAnswer.toLowerCase()) {
+                        clozeScore++;
+                    }
+                } else if (sq.type.startsWith('MC')) {
+                    const inputs = document.querySelectorAll(`input[name="${sq.id}"]:checked`);
+                    let totalFraction = 0;
+                    inputs.forEach(i => totalFraction += parseFloat(i.value));
+                    if (totalFraction >= 100) {
+                        clozeScore++;
+                    }
+                }
+            });
+
+            // For simplicity, full credit if all parts are correct.
+            if (clozeScore === maxClozeScore) {
+                score++;
+            }
+            showFeedback(`You got ${clozeScore} out of ${maxClozeScore} parts correct.`, clozeScore === maxClozeScore);
+            showGeneralFeedback(qNode);
+            updateScoreDisplay();
+        });
+    }
+
+    function renderDescription(qNode) {
+        nextBtn.style.display = 'block';
+    }
+
+    function renderCategory(qNode) {
+        const categoryText = qNode.querySelector('category > text').textContent;
+        categoryDisplay.innerHTML = `<h3 class="category-title">${DOMPurify.sanitize(categoryText)}</h3>`;
+        currentQuestionIndex++;
+        (currentQuestionIndex < quizData.length) ? renderQuestion(currentQuestionIndex) : displayFinalScore();
+    }
+
+    function renderUnsupported(qNode) {
+        const qType = qNode.getAttribute('type');
+        questionArea.insertAdjacentHTML('beforeend', `
+            <div class="unsupported-warning">
+                <strong>Question type not supported:</strong> The question type "${escapeHTML(qType || 'unknown')}" will be skipped.
+            </div>
+        `);
+        showGeneralFeedback(qNode);
+        nextBtn.style.display = 'block';
+    }
+
 
     // --- HELPER FUNCTIONS ---
+    function getContentFromNode(node) {
+        if (!node) return '';
+        // Using innerHTML is the most reliable way to get the content of a node,
+        // including handling CDATA sections correctly and preserving inner HTML tags.
+        return node.innerHTML || '';
+    }
+
     function addSubmitButton(onSubmit) {
         const btn = document.createElement('button'); btn.textContent = 'Submit Answer';
         btn.onclick = () => {
+            scorableQuestionsAttempted++;
             onSubmit(); btn.disabled = true; nextBtn.style.display = 'block';
-            document.querySelectorAll('form.answers input').forEach(el => el.disabled = true);
+            document.querySelectorAll('form.answers input, .matching-select, #sa-input, #num-input, .cloze-text-input, .cloze-option input').forEach(el => el.disabled = true);
         };
         questionArea.appendChild(btn);
     }
@@ -407,21 +578,44 @@
 
     function showGeneralFeedback(qNode) {
         const node = qNode.querySelector('generalfeedback > text');
-        if (node?.innerHTML.trim()) {
-            const sanitizedFeedback = DOMPurify.sanitize(node.innerHTML);
+        const feedbackContent = getContentFromNode(node);
+        if (feedbackContent.trim()) {
+            const sanitizedFeedback = DOMPurify.sanitize(feedbackContent);
             feedbackArea.innerHTML += `<div class="feedback feedback-general"><b>General Feedback:</b> ${sanitizedFeedback}</div>`;
         }
     }
     
     function updateScoreDisplay() {
-        const perc = scorableQuestions > 0 ? ((score / scorableQuestions) * 100).toFixed(0) : 0;
-        scoreDisplay.textContent = `Score: ${score} / ${scorableQuestions} (${perc}%)`;
+        const perc = scorableQuestionsAttempted > 0 ? ((score / scorableQuestionsAttempted) * 100).toFixed(0) : 0;
+        scoreDisplay.textContent = `Score: ${score} / ${scorableQuestionsAttempted} (${perc}%)`;
+    }
+
+    function updateProgressDisplay() {
+        if (!quizData) return;
+        const totalQuestions = quizData.length;
+        const questionsToShow = Math.min(currentQuestionIndex + 1, totalQuestions);
+        const progressPerc = totalQuestions > 0 ? ((questionsToShow / totalQuestions) * 100) : 0;
+
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+
+        if (progressBar && progressText) {
+            progressBar.style.width = `${progressPerc}%`;
+            progressText.textContent = `Question ${questionsToShow} of ${totalQuestions}`;
+        }
     }
 
     function displayFinalScore() {
         questionArea.innerHTML = '<h2>Quiz Complete!</h2>';
         feedbackArea.innerHTML = `<p>You have finished the quiz. Your final score is shown above.</p>`;
         nextBtn.style.display = 'none'; categoryDisplay.innerHTML = '';
+
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        if (progressBar && progressText) {
+            progressBar.style.width = '100%';
+            progressText.textContent = `Quiz Complete! ${quizData.length} of ${quizData.length}`;
+        }
     }
 
     function escapeHTML(str) {
